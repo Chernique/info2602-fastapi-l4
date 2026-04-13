@@ -1,6 +1,7 @@
 from pwdlib import PasswordHash
-from app.models import *
+from app.models import User, RegularUser, Admin, UserCreate, UserResponse, Token
 from app.database import get_session
+from sqlmodel import Session
 from sqlmodel import select
 from datetime import timedelta, datetime, timezone
 from app.database import SessionDep
@@ -35,7 +36,7 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes
     return encoded_jwt
 
 # Gets the current user who is making the request
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db:SessionDep)->User:
+def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[Session, Depends(get_session)]) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -43,20 +44,16 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db:Ses
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub",None)
-        user_role = payload.get("role", None)
-        if user_id is None or user_role is None:
+        username = payload.get("sub")
+        if username is None:
             raise credentials_exception
     except InvalidTokenError:
         raise credentials_exception
-    user = None
-
-    if user_role == "admin":
-        user = db.get(Admin,user_id)
-    else:
-        user = db.get(RegularUser,user_id)
+    user = db.exec(select(RegularUser).where(RegularUser.username == username)).one_or_none()
     if user is None:
-        raise credentials_exception
+        user = db.exec(select(Admin).where(Admin.username == username)).one_or_none()
+        if user is None:
+            raise credentials_exception
     return user
 
 AuthDep = Annotated[User, Depends(get_current_user)]
